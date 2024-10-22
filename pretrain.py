@@ -49,7 +49,7 @@ def parse_args():
     parser.add_argument(
         "--max_source_length",
         type=int,
-        default=32,
+        default=512,
         help=(
             "The maximum total input sequence length after "
             "tokenization.Sequences longer than this will be truncated, sequences shorter will be padded."
@@ -92,7 +92,7 @@ def parse_args():
     )
     parser.add_argument("--num_train_epochs", 
                         type=int, 
-                        default=10, 
+                        default=100, 
                         help="Total number of training epochs to perform.")
     parser.add_argument(
         "--max_train_steps",
@@ -208,12 +208,12 @@ def main():
     ##### GET THE DATASET
     # In distributed training, the load_dataset func guarantee that only one local process can concurrently download the dataset 
     raw_datasets = datasets.load_dataset('cppmai/pretrain_pubmed_100k')
-    train_samples = raw_datasets['train'].select(range(50))
-    valid_samples = raw_datasets['validation'].select(range(5))
-    raw_datasets = DatasetDict({
-        'train': train_samples,
-        'validation': valid_samples
-    })
+    # train_samples = raw_datasets['train'].select(range(50))
+    # valid_samples = raw_datasets['validation'].select(range(5))
+    # raw_datasets = DatasetDict({
+    #     'train': train_samples,
+    #     'validation': valid_samples
+    # })
     
     ##### Get pretrained model and tokenizer 
     # in distributed training, .from_pretrained methods guarantee that only 1 local process can concurrently down model & vocab
