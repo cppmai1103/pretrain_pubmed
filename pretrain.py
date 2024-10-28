@@ -122,6 +122,7 @@ def parse_args():
     parser.add_argument(
         "--checkpointing_steps",
         type=str,
+        default='epoch',
         help="Whether the various states should be saved at the end of every n steps, or 'epoch' for each epoch.",
     )
     parser.add_argument(
@@ -148,6 +149,12 @@ def parse_args():
     )
     parser.add_argument(
         "--num_warmup_steps", type=int, default=0, help="Number of steps for the warmup in the lr scheduler."
+    )
+    parser.add_argument(
+        "--resume_from_checkpoint",
+        type=str,
+        default=None,
+        help="If the training should continue from a checkpoint folder.",
     )
     parser.add_argument("--hub_token", type=str, default="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", help="The token to use to push to the Model Hub.")
     args = parser.parse_args()
@@ -208,8 +215,8 @@ def main():
     ##### GET THE DATASET
     # In distributed training, the load_dataset func guarantee that only one local process can concurrently download the dataset 
     raw_datasets = datasets.load_dataset('cppmai/pretrain_pubmed_100k')
-    # train_samples = raw_datasets['train'].select(range(50))
-    # valid_samples = raw_datasets['validation'].select(range(5))
+    # train_samples = raw_datasets['train'].select(range(10))
+    # valid_samples = raw_datasets['validation'].select(range(2))
     # raw_datasets = DatasetDict({
     #     'train': train_samples,
     #     'validation': valid_samples
@@ -322,7 +329,7 @@ def main():
         experiment_config = vars(args)
         # TensorBoard cannot log Enums, need the raw value
         experiment_config["lr_scheduler_type"] = experiment_config["lr_scheduler_type"].value
-        accelerator.init_trackers(project_name='pretrain_bart_pubmed', config=experiment_config)
+        accelerator.init_trackers('pretrain_bart_pubmed', experiment_config)
 
     ##### TRAINING & EVALUATING
     # training loop
@@ -340,13 +347,53 @@ def main():
     progress_bar = tqdm(range(args.max_train_steps), disable=not accelerator.is_local_main_process)
     es =  EarlyStopping()
     completed_steps = 0
+    starting_epoch = 0
 
-    for epoch in range(args.num_train_epochs):
+    # Potentially load in the weights and states from a previous save
+    if args.resume_from_checkpoint:
+        if args.resume_from_checkpoint is not None or args.resume_from_checkpoint != "":
+            checkpoint_path = args.resume_from_checkpoint
+            path = os.path.basename(args.resume_from_checkpoint)
+        else:
+            # Get the most recent checkpoint
+            dirs = [f.name for f in os.scandir(os.getcwd()) if f.is_dir()]
+            dirs.sort(key=os.path.getctime)
+            path = dirs[-1]  # Sorts folders by date modified, most recent checkpoint is the last
+            checkpoint_path = path
+            path = os.path.basename(checkpoint_path)
+
+        accelerator.print(f"Resumed from checkpoint: {checkpoint_path}")
+        accelerator.load_state(checkpoint_path)
+        # Extract `epoch_{i}` or `step_{i}`
+        training_difference = os.path.splitext(path)[0]
+
+        if "epoch" in training_difference:
+            starting_epoch = int(training_difference.replace("epoch_", "")) + 1
+            resume_step = None
+            completed_steps = starting_epoch * num_update_steps_per_epoch
+        else:
+            # need to multiply `gradient_accumulation_steps` to reflect real steps
+            resume_step = int(training_difference.replace("step_", "")) * args.gradient_accumulation_steps
+            starting_epoch = resume_step // len(train_dataloader)
+            completed_steps = resume_step // args.gradient_accumulation_steps
+            resume_step -= starting_epoch * len(train_dataloader)
+
+    # update the progress_bar if load from checkpoint
+    progress_bar.update(completed_steps)
+
+    for epoch in range(starting_epoch, args.num_train_epochs):
         # Training
         model.train()
         total_train_loss = 0
+
+        if args.resume_from_checkpoint and epoch == starting_epoch and resume_step is not None:
+            # We skip the first `n` batches in the dataloader when resuming from a checkpoint
+            active_dataloader = accelerator.skip_first_batches(train_dataloader, resume_step)
+        else:
+            active_dataloader = train_dataloader
+
         # Itering over all examples in train_loader 
-        for step, batch in enumerate(train_dataloader):
+        for step, batch in enumerate(active_dataloader):
             with accelerator.accumulate(model):
                 outputs = model(**batch)
                 train_loss = outputs.loss
