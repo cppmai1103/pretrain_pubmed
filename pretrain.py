@@ -454,7 +454,8 @@ def main():
                     "train_loss": total_train_loss.item() / len(train_dataloader),
                     "epoch": epoch,
                     "step": completed_steps,
-                    "learning_rates": optimizer.param_groups[0]["lr"]
+                    "learning_rates": optimizer.param_groups[0]["lr"],
+                    "best_epoch": best_epoch
                 },
                 step=completed_steps,
             )
@@ -483,25 +484,24 @@ def main():
         if accelerator.check_trigger():
             print(f"Stopping early after epoch {epoch}")
             break
-        
-    accelerator.end_training()
+    
     # Save and upload
     # blocking=False: can push checkpoints per epoch asynchronously
     if args.output_dir is not None:
         accelerator.wait_for_everyone()
         if accelerator.is_main_process and args.push_to_hub:
             with open(os.path.join(args.output_dir, "all_results.json"), "w") as f:
-                json.dump({"best_eval_loss": best_eval_loss.item(), "perplexity": perplexity}, f)
+                json.dump({"best_epoch": best_epoch, "best_eval_loss": best_eval_loss.item(), "perplexity": perplexity}, f)
 
-            if accelerator.is_main_process and args.push_to_hub:
-                api.upload_folder(
-                    commit_message=f"epoch {best_epoch}",
-                    folder_path=args.output_dir,
-                    repo_id=repo_id,
-                    repo_type="model",
-                    token=args.hub_token,
-                )
-                logger.info(f'***** Best model is saved at epoch {best_epoch} *****')
+            api.upload_folder(
+                commit_message=f"epoch {best_epoch}",
+                folder_path=args.output_dir,
+                repo_id=repo_id,
+                repo_type="model",
+                token=args.hub_token,
+            )
+            logger.info(f'***** Best model is saved at epoch {best_epoch} *****')
+    accelerator.end_training()
 
 if __name__ == "__main__":
     wandb.login(key='1a7b141f46dd483782c656aad7957e06935592e8')
