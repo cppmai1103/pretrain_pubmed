@@ -34,6 +34,11 @@ from huggingface_hub import HfApi
 
 from early_stopping import *
 
+import torch.distributed as dist
+from datetime import timedelta
+
+dist.init_process_group(backend="nccl", timeout=timedelta(minutes=30))
+
 ##### track
 logger = get_logger(__name__)
 
