@@ -37,7 +37,8 @@ from early_stopping import *
 import torch.distributed as dist
 from datetime import timedelta
 
-dist.init_process_group(backend="nccl", timeout=timedelta(minutes=30))
+if torch.cuda.device_count() > 1:
+    dist.init_process_group(backend="nccl", timeout=timedelta(minutes=30))
 
 ##### track
 logger = get_logger(__name__)
@@ -72,7 +73,7 @@ def parse_args():
     parser.add_argument(
         "--batch_size",
         type=int,
-        default=32,
+        default=8,
         help="Batch size",    
     )
     parser.add_argument(
@@ -220,8 +221,8 @@ def main():
     ##### GET THE DATASET
     # In distributed training, the load_dataset func guarantee that only one local process can concurrently download the dataset 
     raw_datasets = datasets.load_dataset('cppmai/pretrain_pubmed_100k')
-    # train_samples = raw_datasets['train'].select(range(10))
-    # valid_samples = raw_datasets['validation'].select(range(2))
+    # train_samples = raw_datasets['train'].select(range(50))
+    # valid_samples = raw_datasets['validation'].select(range(5))
     # raw_datasets = DatasetDict({
     #     'train': train_samples,
     #     'validation': valid_samples
@@ -473,9 +474,9 @@ def main():
             )
             if accelerator.is_main_process:
                 tokenizer.save_pretrained(args.output_dir)
-                logger.info(f'Best model save at epoch {epoch}')
+                logger.info(f'Best model save at epoch {best_epoch}')
                 
-        if args.checkpointing_steps == "epoch" and epoch%5==0:
+        if args.checkpointing_steps == "epoch" and epoch%10==0:
             output_dir = f"epoch_{epoch}"
             if args.output_dir is not None:
                 output_dir = os.path.join(args.output_dir, output_dir)
