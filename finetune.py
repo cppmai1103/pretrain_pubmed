@@ -94,7 +94,7 @@ def parse_args():
     parser.add_argument(
         "--batch_size",
         type=int,
-        default=16,
+        default=32,
         help="Batch size",    
     )
     parser.add_argument(
@@ -196,7 +196,7 @@ def parse_args():
     args = parser.parse_args()
     
     if args.finetune_case == 0: 
-        args.model_dir = 'cppmai/pretrain_bart_pubmed'
+        args.model_dir = 'facebook/bart-base'
         args.output_dir = 'bart-sum_pubmed'
     # elif args.finetune_case == 1: 
     #     args.model_dir = 'cppmai/pretrained_bart_cdip'
@@ -283,7 +283,7 @@ def main():
     ##### HuggingFace repo
     if accelerator.is_main_process and args.push_to_hub:
         # Retrieve of infer repo_name
-        repo_name = 'finetune_bart-sum_pubmed'
+        repo_name = 'finetune_bartbase-sum_pubmed'
         # Create repo and retrieve repo_id
         api = HfApi()
         repo_id = api.create_repo(repo_name, exist_ok=True, token=args.hub_token).repo_id
