@@ -283,7 +283,7 @@ def main():
     ##### HuggingFace repo
     if accelerator.is_main_process and args.push_to_hub:
         # Retrieve of infer repo_name
-        repo_name = 'finetune_bartbase-sum_pubmed'
+        repo_name = 'finetune_bartbase-sum_pubmed__'
         # Create repo and retrieve repo_id
         api = HfApi()
         repo_id = api.create_repo(repo_name, exist_ok=True, token=args.hub_token).repo_id
