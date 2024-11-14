@@ -179,7 +179,7 @@ def parse_args():
     parser.add_argument(
         "--finetune_case",
         type=int,
-        default="0",
+        default="1",
         help="""2 cases: 
             0. model: bart-base
             1. model: bart-pubmed"""
@@ -296,7 +296,8 @@ def main():
     # model 
     model = BartForConditionalGeneration.from_pretrained(
         args.model_dir, 
-        trust_remote_code=args.trust_remote_code)
+        trust_remote_code=args.trust_remote_code, 
+        early_stopping=True, num_beams=4, no_repeat_ngram_size=3, forced_bos_token_id=0, forced_eos_token_id=2)
     # tokenizer
     tokenizer = BartTokenizer.from_pretrained(
         'facebook/bart-base',  
