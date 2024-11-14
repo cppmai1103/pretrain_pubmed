@@ -37,11 +37,13 @@ from torch.utils.data import DataLoader
 from transformers import get_scheduler
 from tqdm.auto import tqdm
 import evaluate
-from torch.optim import AdamW
+from torch.optim import Adam
 
 from early_stopping import * 
 import torch.distributed as dist
 from datetime import timedelta
+
+import shutil
 
 if torch.cuda.device_count() > 1:
     dist.init_process_group(backend="nccl", timeout=timedelta(minutes=30))
@@ -178,12 +180,9 @@ def parse_args():
         "--finetune_case",
         type=int,
         default="0",
-        help="""5 cases: 
-            0. model: bart-base, input: OCRtext 
-            1. model: bart-cdip, input: OCRtext
-            2. model: bart-cdip, input: QAtext
-            3. model: bart-cdip, input: question_text
-            4. model: bart-cdip, input: answer_text"""
+        help="""2 cases: 
+            0. model: bart-base
+            1. model: bart-pubmed"""
     )
     parser.add_argument(
         "--resume_from_checkpoint",
@@ -197,19 +196,11 @@ def parse_args():
     
     if args.finetune_case == 0: 
         args.model_dir = 'facebook/bart-base'
-        args.output_dir = 'bart-sum_pubmed'
-    # elif args.finetune_case == 1: 
-    #     args.model_dir = 'cppmai/pretrained_bart_cdip'
-    #     args.output_dir = 'Msum_bart-cdip_OCRtext'
-    # elif args.finetune_case == 2: 
-    #     args.model_dir = 'cppmai/pretrained_bart_cdip'
-    #     args.output_dir = 'Msum_bart-cdip_QAtext'
-    # elif args.finetune_case == 3: 
-    #     args.model_dir = 'cppmai/pretrained_bart_cdip'
-    #     args.output_dir = 'Msum_bart-cdip_question-text'
-    # elif args.finetune_case == 4: 
-    #     args.model_dir = 'cppmai/pretrained_bart_cdip'
-    #     args.output_dir = 'Msum_bart-cdip_anwser_text'
+        args.output_dir = 'bartbase-sum'
+    else: 
+        args.model_dir = 'SBakkali/docsum_pretrain_pubmed' # cppmai/pretrain_bart_pubmed
+        args.output_dir = 'bartpubmed-sum'
+    args.repo_name = args.output_dir 
     return args
 
 # ROUGE metric expect: generated summaries into sentences that are separated by newlines
@@ -282,16 +273,14 @@ def main():
 
     ##### HuggingFace repo
     if accelerator.is_main_process and args.push_to_hub:
-        # Retrieve of infer repo_name
-        repo_name = 'finetune_bartbase-sum_pubmed__'
         # Create repo and retrieve repo_id
         api = HfApi()
-        repo_id = api.create_repo(repo_name, exist_ok=True, token=args.hub_token).repo_id
+        repo_id = api.create_repo(args.repo_name, exist_ok=True, token=args.hub_token).repo_id
         logger.info('HuggingFace folder is created')
         
         with open(os.path.join(args.output_dir, ".gitignore"), "w+") as gitignore:
-            if "step_*" not in gitignore:
-                gitignore.write("step_*\n")
+            # if "step_*" not in gitignore:
+            #     gitignore.write("step_*\n")
             if "epoch_*" not in gitignore:
                 gitignore.write("epoch_*\n")
     accelerator.wait_for_everyone()
@@ -300,9 +289,9 @@ def main():
     # dataset
     logger.info('Load data')
     raw_datasets = load_dataset('cppmai/finetune_pubmed')
-    # raw_datasets["train"] = raw_datasets["train"].select(range(50))
-    # raw_datasets["validation"] = raw_datasets["validation"].select(range(10))
-    # raw_datasets["test"] = raw_datasets["test"].select(range(10))
+    # raw_datasets["train"] = raw_datasets["train"].select(range(10))
+    # raw_datasets["validation"] = raw_datasets["validation"].select(range(5))
+    # raw_datasets["test"] = raw_datasets["test"].select(range(5))
 
     # model 
     model = BartForConditionalGeneration.from_pretrained(
@@ -319,14 +308,7 @@ def main():
     ##### Pre-processing data
     def preprocess_function(examples):
         # Tokenize the texts
-        if args.finetune_case == 2:
-            inputs = [f'Question: {q} Answer: {a}\n Document: {c}' for q, a, c in zip(examples['question'], examples['answer'], examples['content'])]
-        # elif args.finetune_case == 3:
-        #     inputs = [f'Question: {q}\nDocument: {c}' for q, c in zip(examples['question'], examples['content'])]
-        # elif args.finetune_case == 4:
-        #     inputs = [f'Answer: {a}\n Document: {c}' for a, c in zip(examples['answer'], examples['content'])]
-        else: # [0, 1]
-            inputs = [f'Document: {c}' for  c in examples['article']]
+        inputs = [f'Document: {c}' for  c in examples['article']]
         model_inputs = tokenizer(inputs, max_length=args.max_source_length, truncation=True)
 
         # tokenizer for targets
@@ -362,7 +344,7 @@ def main():
     
     ##### Hyperparameters
     # Define optimizer 
-    optimizer = AdamW(model.parameters(), lr=args.learning_rate)
+    optimizer = Adam(model.parameters(), lr=args.learning_rate)
     
     # Learning schedule 
     # Scheduler and math around the number of training steps.
@@ -423,6 +405,7 @@ def main():
     es = EarlyStopping()
     completed_steps = 0
     starting_epoch = 0
+    old=None
 
     # Potentially load in the weights and states from a previous save
     if args.resume_from_checkpoint:
@@ -485,12 +468,16 @@ def main():
                 progress_bar.update(1)
                 completed_steps += 1
 
-            if isinstance(checkpointing_steps, int):
-                if completed_steps % checkpointing_steps == 0:
-                    output_dir = f"step_{completed_steps}"
-                    if args.output_dir is not None:
-                        output_dir = os.path.join(args.output_dir, output_dir)
-                    accelerator.save_state(output_dir, safe_serialization=True)
+            # if isinstance(checkpointing_steps, int):
+            #     if completed_steps % checkpointing_steps == 0:
+            #         output_dir = f"step_{completed_steps}"
+            #         if args.output_dir is not None:
+            #             output_dir = os.path.join(args.output_dir, output_dir)
+            #         accelerator.save_state(output_dir, safe_serialization=True)
+            #         print(os.path.join(args.output_dir, old_dir))
+            #         if os.path.exists(os.path.join(args.output_dir, old_dir)):
+            #             os.remove(os.path.join(args.output_dir, old_dir))
+            #         old_dir = output_dir
 
             if completed_steps >= args.max_train_steps:
                 break
@@ -561,6 +548,20 @@ def main():
             best_eval_loss = result["eval_loss"]
             best_result = result
             
+            # save state
+            if args.checkpointing_steps == "epoch":
+                output_dir = f"epoch_{epoch}"
+                if args.output_dir is not None:
+                    output_dir = os.path.join(args.output_dir, output_dir)
+                    accelerator.save_state(output_dir, safe_serialization=True)  
+
+                old_dir = os.path.join(args.output_dir, f"epoch_{old}") 
+                logger.info(old_dir)   
+                if os.path.exists(old_dir):
+                    shutil.rmtree(old_dir)
+                old = epoch
+            
+            # save pretrain
             accelerator.wait_for_everyone()
             unwrapped_model = accelerator.unwrap_model(model)
             unwrapped_model.save_pretrained(args.output_dir, is_main_process=accelerator.is_main_process, save_function=accelerator.save)
@@ -577,11 +578,6 @@ def main():
             print(f"Stopping early after epoch {epoch}")
             break
             
-        if args.checkpointing_steps == "epoch" and epoch%5==0:
-            output_dir = f"epoch_{epoch}"
-            if args.output_dir is not None:
-                output_dir = os.path.join(args.output_dir, output_dir)
-                accelerator.save_state(output_dir, safe_serialization=True)  
     
     ##### Test: run predictions on the test set at the very end
     test_predictions = []
